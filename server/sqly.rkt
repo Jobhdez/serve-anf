@@ -30,30 +30,32 @@
       (symbol->string table)))]
     
     [(list (list fields ...) (list 'from table) (list 'limit val))
-     (list
+     (flatten
+      (list
       (string-append
        "SELECT "
       (join-fields fields)
       " FROM "
       (symbol->string table)
-      " LIMIT ~a")
-      (list (field->sql-data val)))]
+      " LIMIT $1")
+      (list (field->sql-data val))))]
     
     [(list (list fields ...) (list 'from table) (list 'order-by exp order))
-     (list
+     (flatten
+      (list
       (string-append
        "SELECT "
       (join-fields fields)
       " FROM "
       (symbol->string table)
-      " ORDER BY ~a "
+      " ORDER BY $1 "
       (field->sql-data order))
-      (list (field->sql-data exp)))]
+      (list (field->sql-data exp))))]
     
     [(list (list fields ...) (list 'from table) (list 'where (list where-exprs ...)))
      (let [(joined-fields (join-fields fields))
            (whereeq (where->string where-exprs))]
-       (list (string-append
+       (flatten (list (string-append
                       "SELECT "
                       (join-fields fields)
                       " FROM "
@@ -61,18 +63,19 @@
                       " WHERE "
                       (car whereeq))
                       
-            (car (cdr whereeq))))]
+            (car (cdr whereeq)))))]
     
     [(list (list fields ...) (list 'from table) (list 'where (list where-exprs ...)) (list 'order-by exp order))
      (let [(where-exps (where->string where-exprs))]
-           (list
-            (string-append
-             "SELECT "
-             (join-fields fields) " FROM " (field->sql-data table) " WHERE " (first where-exps) " " " ORDER BY " (field->sql-data exp) " "  (field->sql-data order))
-            (cdr where-exps)))]
+       (flatten
+        (list
+         (string-append
+          "SELECT "
+          (join-fields fields) " FROM " (field->sql-data table) " WHERE " (first where-exps) " " " ORDER BY " (field->sql-data exp) " "  (field->sql-data order))
+         (cdr where-exps))))]
 
     [(list (list fields ...) (list 'from table) (list 'left-join table2 'on (list (? symbol? op) (? symbol? e) (? symbol? e2))))
-     (list
+     (flatten (list
       (string-append
        "SELECT "
       (join-fields fields)
@@ -81,11 +84,11 @@
       " LEFT JOIN "
       (field->sql-data table2)
       " ON "
-      "~a "
+      "$1 "
       " "
       (field->sql-data op)
-      " ~a")
-      (list (field->sql-data e) (field->sql-data e2)))]))
+      " $2")
+      (list (field->sql-data e) (field->sql-data e2))))]))
 
 (define (where->string . exprs)
   (match exprs
@@ -103,12 +106,12 @@
        (field->sql-data id)
        " "
       (field->sql-data op)
-      " ~a "
+      " $1 "
       (if (eq? oper 'and) " AND " " OR ")
       (field->sql-data id2)
       " "
       (field->sql-data op2)
-      " ~a ")
+      " $2 ")
       (list (field->sql-data val) (field->sql-data val2)))]
 
     [(list (list (? symbol? id) (list 'in fields ...)))
@@ -129,7 +132,8 @@
     [(list 'into table-name (list fields ...) (list 'values (list fields-vals ...)))
      (let [(joined-fields (join-fields fields))
            (joined-val-fields (join-fields fields-vals))]
-       (list
+       (flatten
+        (list
         (string-append
         "INSERT "
         "into "
@@ -141,7 +145,7 @@
         "("
         (make-params fields-vals)
         ")")
-        (map (lambda (f) (field->sql-data f)) fields-vals)))]))
+        (map (lambda (f) (field->sql-data f)) fields-vals))))]))
 
 ;;; UPDATE
 (define (compile-update . exprs)
@@ -151,13 +155,14 @@
        [(list (list '= id val) ...)
         (let [(vals (get-update-field-vals exps))
               (eq-exps (make-update-params exps))]
-          (list
+          (flatten
+           (list
            (string-append
             "UPDATE "
             (field->sql-data table)
             " SET "
             (join-equal-exps eq-exps))
-           vals))])]
+           vals)))])]
 
     [(list (? symbol? val) (list 'set (list exps ...)) (list 'where (list where-exps ...)))
      (match exps
@@ -165,14 +170,15 @@
         (let [(vals (get-update-field-vals exps))
               (eq-exps (make-update-params exps))
               (whereexp (where->string where-exps))]
-          (list
+          (flatten
+           (list
            (string-append
             (field->sql-data val)
             " SET "
             (join-equal-exps eq-exps)
             " WHERE "
             (car whereexp))
-           (flatten (cons vals (second whereexp)))))])]))
+           (flatten (cons vals (second whereexp))))))])]))
          
 
 ;;; DELETE
@@ -185,14 +191,15 @@
       "FROM "
       (field->sql-data table)))]
     [(list (list 'from table) (list 'where (list where-exps ...)))
-     (list
+     (flatten
+      (list
       (string-append
       "DELETE "
       "FROM "
       (field->sql-data table)
       " WHERE "
       (first (where->string where-exps)))
-      (second (where->string where-exps)))]))
+      (second (where->string where-exps))))]))
 
 ;;;; == Utils ==
 (define (join-fields fields)
@@ -229,8 +236,9 @@
      (string-append "$" (number->string (+ counter 1)))) ","))
 
 (define (make-update-params fields)
-  (for/list ([i fields])
-    (define new-field (list-set i 2 "~a"))
+  (for/list ([i fields]
+             [counter (in-naturals)])
+    (define new-field (list-set i 2 (string-append "$" (number->string (+ counter 1)))))
     new-field))
 
 (define (get-update-field-vals fields)
