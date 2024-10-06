@@ -4,6 +4,7 @@
 (require web-server/servlet-env)
 (require "../parser/pyparser.rkt"
          "../toAnf/to-anf.rkt"
+         "sqly.rkt"
          "database.rkt")
 (require racket/list
          racket/string
@@ -12,6 +13,18 @@
          db)
 
 (require racket/struct)
+
+(define (exec-sql sql db)
+  (apply query-exec db sql))
+
+(define (insert-values fields vals)
+  (insert into anf ,fields (values ,vals)))
+
+(define (select-id fields id)
+  (select ,fields (from anf) (where (= id ,id))))
+
+(define (select-all fields)
+  (select ,fields (from anf)))
 
 (define (parse-json-body req)
   (bytes->jsexpr (request-post-data/raw req)))
@@ -23,14 +36,15 @@
   (define get-property
     (curry get-hash-value (parse-json-body req)))
   (define expr (get-property 'input-exp))
-  (define ast (parse-expression expr))
-  (define anf (format "~a" (car (syntax->anf ast))))
-  (query-exec the-db (format "insert into a_normal_forms(input_exp, ast, anf_exp) values ('~a', '~a', '~a')" expr ast anf))
+  (define ast (format "~a" (parse-expression expr)))
+  (define anf (format "~a" (car (syntax->anf (parse-expression expr)))))
+  (define insert-stmt (flatten (insert-values '(input_exp ast anf_exp) (list expr ast anf))))
+  (exec-sql insert-stmt the-db)
   (response/jsexpr
    (hasheq 'exp anf)))
 
 (define (view-expression req pid)
-  (define e (query-rows the-db (format "select * from a_normal_forms where id = ~a" pid)))
+  (define e (apply query-rows the-db (flatten (select-id '(*) pid))))
   (define data-list (car (map vector->list e)))
   (response/jsexpr
    (hasheq 'exp (hasheq 'id (first data-list)
@@ -39,7 +53,8 @@
                         'anf (fourth data-list)))))
 
 (define (get-anf-exps req)
-  (define data (query-rows the-db (format "select * from a_normal_forms")))
+  (define all (select-all '(*)))
+  (define data (apply query-rows the-db all))
   (define data-list (map vector->list data))
   (define data-hash (map (lambda (row) (hasheq 'id (first row)
                                                'exp (second row)
