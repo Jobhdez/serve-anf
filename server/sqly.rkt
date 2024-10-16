@@ -54,7 +54,7 @@
     
     [(list (list fields ...) (list 'from table) (list 'where (list where-exprs ...)))
      (let [(joined-fields (join-fields fields))
-           (whereeq (where->string where-exprs))]
+           (whereeq (where->string where-exprs 1))]
        (flatten (list (string-append
                       "SELECT "
                       (join-fields fields)
@@ -66,7 +66,7 @@
             (car (cdr whereeq)))))]
     
     [(list (list fields ...) (list 'from table) (list 'where (list where-exprs ...)) (list 'order-by exp order))
-     (let [(where-exps (where->string where-exprs))]
+     (let [(where-exps (where->string where-exprs 1))]
        (flatten
         (list
          (string-append
@@ -90,37 +90,40 @@
       " $2")
       (list (field->sql-data e) (field->sql-data e2))))]))
 
-(define (where->string . exprs)
+(define (where->string exprs counter)
   (match exprs
-    [(list (list (? symbol? op) (? symbol? id) val)) ;; e.g., (list '= id 5)
+    [(list (? symbol? op) (? symbol? id) val) ;; e.g., (list '= id 5)
      (list
       (string-append
       (field->sql-data id)
       (field->sql-data op)
-      "$1")
+      "$"
+      (number->string counter))
       (list (field->sql-data val)))]
     
-    [(list (list (? and-or? oper) (list op id val) (list op2 id2 val2)))
+    [(list (? and-or? oper) (list op id val) (list op2 id2 val2))
      (list
       (string-append
        (field->sql-data id)
        " "
       (field->sql-data op)
-      " $1 "
+      " $"
+      (number->string counter)
       (if (eq? oper 'and) " AND " " OR ")
       (field->sql-data id2)
       " "
       (field->sql-data op2)
-      " $2 ")
+      " $"
+      (number->string (+ counter 1)))
       (list (field->sql-data val) (field->sql-data val2)))]
 
-    [(list (list (? symbol? id) (list 'in fields ...)))
+    [(list (? symbol? id) (list 'in fields ...))
      (list
       (string-append
       (field->sql-data id)
       " in "
       "("
-      (make-params fields)
+      (make-params fields counter)
       ")")
       (map (lambda (f) (field->sql-data f)) fields))]))
       
@@ -143,7 +146,7 @@
         ") "
         "values "
         "("
-        (make-params fields-vals)
+        (make-params fields-vals 1)
         ")")
         (map (lambda (f) (field->sql-data f)) fields-vals))))]))
 
@@ -169,10 +172,11 @@
        [(list (list '= id val2) ...)
         (let [(vals (get-update-field-vals exps))
               (eq-exps (make-update-params exps))
-              (whereexp (where->string where-exps))]
+              (whereexp (where->string where-exps (+ (length exps) 1)))]
           (flatten
            (list
-           (string-append
+            (string-append
+             "UPDATE "
             (field->sql-data val)
             " SET "
             (join-equal-exps eq-exps)
@@ -198,8 +202,8 @@
       "FROM "
       (field->sql-data table)
       " WHERE "
-      (first (where->string where-exps)))
-      (second (where->string where-exps))))]))
+      (first (where->string where-exps 1)))
+      (second (where->string where-exps 1))))]))
 
 ;;;; == Utils ==
 (define (join-fields fields)
@@ -229,11 +233,13 @@
        (field->sql-data val))]))
   (string-join (map exp->string exps) ", "))
 
-(define (make-params fields)
+(define (make-params fields counter)
   (string-join
-   (for/list ([i fields]
-              [counter (in-naturals)])
-     (string-append "$" (number->string (+ counter 1)))) ","))
+   (for/list ([i fields])
+     (let ([param (string-append "$" (number->string counter))])
+       (set! counter (+ counter 1))
+       param)) ","))
+
 
 (define (make-update-params fields)
   (for/list ([i fields]
